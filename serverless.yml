@@ -3,36 +3,51 @@ service: aws-auth0-cognito-custom
 provider:
   name: aws
   runtime: nodejs14.x
-
+  environment:
+    AUTH0_CLIENT_ID: ${file(./secrets.json):AUTH0_CLIENT_ID}
+    AUTH0_CLIENT_PUBLIC_KEY: ${file(./public_key)}
 functions:
+  auth:
+    handler: auth.auth
   publicEndpoint:
     handler: handler.publicEndpoint
     events:
       - http:
           path: api/public
-          method: get
+          method: post
           intergration: lambda
           cors: true
-  auth:
-    handler: auth.authorize
+  
   privateEndpoint:
     handler: handler.privateEndpoint
     events:
       - http:
           path: api/private
-          method: get
+          method: post
           authorizer: auth
-          cors: 
-            origins: 
-              - '*'
-            headers:
-              - Content-Type
-              - X-Amz-Date
-              - Authorization
-              - X-Api-Key
-              - X-Amz-Security-Token
-
-            
-  
+          cors: true       
+resources:
+  Resources:
+    # This response is needed for custom authorizer failures cors support ¯\_(ツ)_/¯
+    GatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: EXPIRED_TOKEN
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
+    AuthFailureGatewayResponse:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: UNAUTHORIZED
+        RestApiId: 
+          Ref: 'ApiGatewayRestApi'
+        StatusCode: '401'
 plugins:
   - serverless-offline

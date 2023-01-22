@@ -1,16 +1,9 @@
 'use strict';
+const jwt = require('jsonwebtoken');
+const AUTH0_CLIENT_ID = process.env.AUTH0_CLIENT_ID;
+const AUTH0_CLIENT_PUBLIC_KEY = process.env.AUTH0_CLIENT_PUBLIC_KEY;
 
-const jwk = require('jsonwebtoken');
-const jwkToPem = require('jwk-to-pem');
-const request = require('request');
-
-// For Auth0:       https://<project>.auth0.com/
-// refer to:        http://bit.ly/2hoeRXk
-// For AWS Cognito: https://cognito-idp.<region>.amazonaws.com/<user pool id>
-// refer to:        http://amzn.to/2fo77UI
-
-const iss = 'https://vue-learn.auth0.com/';
-
+// Policy helper function
 const generatePolicy = (principalId, effect, resource) => {
     const authResponse = {};
     authResponse.principalId = principalId;
@@ -29,42 +22,34 @@ const generatePolicy = (principalId, effect, resource) => {
 }
 
 // Reusable Authorizer function, set on `authorizer` field in serverless.yml
-module.exports.authorize = (event, context, cb) => {
-    console.log('Auth function invoked');
-    if (event.authorizationToken) {
-        // Remove 'bearer ' from token:
-        const token = event.authorizationToken.substring(7);
-        request(
-            { url: `${iss}/.well-known/jwks.json`, json: true },
-            (error, response, body) => {
-                if (error || response.statusCode !== 200) {
-                    console.log('Request error: ' + error);
-                    cb('UnAuthorized')
-                }
-                const keys = body;
-                // Based on the JSON of `jwks` create a Pem:
-                const k = keys.keys[0];
-                const jwkArray = {
-                    kty: k.kty,
-                    n: k.n,
-                    e: k.e,
-                }
+module.exports.auth = (event, context, callback) => {
+    console.log('event', event);
+    if (!event.authorizationToken) {
+        return callback('Unauthorized');
+    }
+    const tokenParts = event.authorizationToken.split(' ');
+    const tokenValue = tokenParts[1];
 
-                const pem = jwkToPem(jwkArray);
-
-                jwk.verify(token, pem, { issuer: iss }, (err, decode) => {
-                    if (err) {
-                        console.log('Unauthorized user:', err.message);
-                        cb('UnAuthorized')
-                    }
-                    else {
-                        cb(null, generatePolicy(decode.sub, 'Allow', event.methodArn))
-                    }
-                })
+    if (!(tokenParts[0].toLowerCase() === 'bearer' && tokenValue)) {
+        // no auth token!
+        return callback('Unauthorized');
+    }
+    const options = {
+        audience: AUTH0_CLIENT_ID,
+    };
+    try {
+        jwt.verify(tokenValue, AUTH0_CLIENT_PUBLIC_KEY, options, (verifyError, decode) => {
+            if (verifyError) {
+                console.log('verifyError', verifyError);
+                return callback('Unauthorized');
             }
-        )
-    } else {
-        console.log('No authorizationToken found in the header.');
-        cb('Unauthorized');
+
+            // is custom authorizer function
+            console.log('valid from customAuthorizer', decode);
+            return callback(null, generatePolicy(decode.sub, 'Allow', event.methodArn));
+        })
+    } catch (err) {
+        console.log('catch error. Invalid token', err);
+        return callback('Unauthorized');
     }
 }
